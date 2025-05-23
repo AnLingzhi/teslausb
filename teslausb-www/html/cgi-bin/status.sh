@@ -20,17 +20,35 @@ fi
 
 wifidev=$(find /sys/class/net/ -type l -name 'wl*' -printf '%P' -quit)
 
-if [ -n "$wifidev" ]
-then
-  wifi_ssid=$(iwgetid -r "$wifidev" || true)
-  wifi_freq=$(iwgetid -r -f "$wifidev" || true)
-  wifi_strength=$(iwconfig "$wifidev" | grep "Link Quality" | sed 's/ *Link Quality=\([0-9]*\)\/\([0-9]*\)\(.*\)/\1\/\2/')
-  read -r _ wifi_ip _ < <(ifconfig "$wifidev" | grep "inet ")
-else
-  wifi_ssid=
-  wifi_freq=
-  wifi_strength=
-  wifi_ip=
+wifi_ssid=""
+wifi_freq=""
+wifi_strength=""
+wifi_ip=""
+
+if [ -n "$wifidev" ]; then
+  if command -v iw >/dev/null 2>&1; then
+    iw_output=$(iw dev "$wifidev" link 2>/dev/null)
+    wifi_ssid=$(echo "$iw_output" | awk -F': ' '/SSID:/ {print $2}')
+    wifi_freq=$(echo "$iw_output" | awk -F': ' '/freq:/ {printf "%d", $2 * 1000000}')
+    signal_dbm=$(echo "$iw_output" | awk -F': ' '/signal:/ {print int($2)}')
+    wifi_strength=$(awk "BEGIN {printf \"%.2f\", ($signal_dbm + 90) / 60}")
+  elif command -v iwgetid >/dev/null 2>&1; then
+    wifi_ssid=$(iwgetid -r "$wifidev" 2>/dev/null || true)
+    wifi_freq=$(iwgetid -f "$wifidev" 2>/dev/null || true)
+  fi
+
+  # 信号强度备用方案
+  if [ -z "$wifi_strength" ] && command -v iwconfig >/dev/null 2>&1; then
+    quality=$(iwconfig "$wifidev" 2>/dev/null | grep -i "Link Quality" | sed 's/.*Link Quality=\([0-9]*\)\/\([0-9]*\).*/\1 \2/')
+    if [ -n "$quality" ]; then
+      q1=$(echo "$quality" | cut -d' ' -f1)
+      q2=$(echo "$quality" | cut -d' ' -f2)
+      wifi_strength=$(awk "BEGIN {printf \"%.2f\", $q1 / $q2}")
+    fi
+  fi
+
+  # 获取 IP 地址（IPv4）
+  wifi_ip=$(ip -4 addr show dev "$wifidev" | awk '/inet / {print $2}' | cut -d/ -f1)
 fi
 
 ethdev=$(find /sys/class/net/ -type l \( -name 'eth*' -o -name 'en*' \) -printf '%P' -quit)
